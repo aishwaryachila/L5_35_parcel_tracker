@@ -1,11 +1,11 @@
 
-"""Manage parcel bookings, delivery status, tracking, and shipping costs."""
+"""Courier and parcel tracking system with safer coding practices."""
 
-import os
 import secrets
 import subprocess
 import tempfile
 from datetime import date
+
 
 STATUS_FLOW = [
     "Booked",
@@ -23,7 +23,7 @@ def book_parcel(sender, receiver, weight_kg, history=None):
     if history is None:
         history = []
 
-    tracking_id = "TRK" + str(10001 + len(parcels))
+    tracking_id = f"TRK{10001 + len(parcels)}"
     parcels[tracking_id] = {
         "sender": sender,
         "receiver": receiver,
@@ -35,77 +35,100 @@ def book_parcel(sender, receiver, weight_kg, history=None):
     return tracking_id
 
 
-def advance_status(tracking_id):
-    """Advance a parcel to its next delivery status."""
-    parcel = parcels[tracking_id]
-    if parcel["status"] < len(STATUS_FLOW) - 1:
-        parcel["status"] += 1
-    return STATUS_FLOW[parcel["status"]]
+def update_status(tracking_id, status_index):
+    """Update a parcel's delivery status."""
+    if tracking_id not in parcels:
+        return False
+
+    if not 0 <= status_index < len(STATUS_FLOW):
+        return False
+
+    parcels[tracking_id]["status"] = status_index
+    return True
+
+
+def track_parcel(tracking_id):
+    """Return the tracking details of a parcel."""
+    parcel = parcels.get(tracking_id)
+    if parcel is None:
+        return None
+
+    status = STATUS_FLOW[parcel["status"]]
+    return f"{parcel['sender']} -> {parcel['receiver']}: {status}"
+
+
+def with_courier(tracking_id):
+    """Check whether a parcel is still with the courier."""
+    parcel = parcels.get(tracking_id)
+    return parcel is not None and parcel["status"] < 4
 
 
 def shipping_cost(weight_kg):
     """Calculate shipping cost based on parcel weight."""
-    cost = 50
-    if weight_kg > 1:
-        cost += (weight_kg - 1) * 30
-    return round(cost, 2)
+    if weight_kg < 0:
+        raise ValueError("Parcel weight cannot be negative.")
 
-
-def track_parcel(tracking_id):
-    """Return the route and delivery status of a parcel."""
-    try:
-        parcel = parcels[tracking_id]
-    except KeyError:
-        return "Unknown tracking id " + tracking_id
-
-    route = parcel["sender"] + " -> " + parcel["receiver"]
-    return route + ": " + STATUS_FLOW[parcel["status"]]
-
-
-def is_with_courier(tracking_id):
-    """Check whether a parcel is picked up or in transit."""
-    status = STATUS_FLOW[parcels[tracking_id]["status"]]
-    return status in ("Picked Up", "In Transit")
+    return weight_kg * 10 + 40
 
 
 def label_path():
-    """Create a secure temporary file and return its path."""
+    """Create a secure temporary file path for a parcel label."""
     with tempfile.NamedTemporaryFile(
-        suffix=".txt", delete=False
-    ) as temporary_file:
-        return temporary_file.name
+        suffix=".txt",
+        delete=False,
+    ) as label_file:
+        return label_file.name
 
 
 def ping_hub(hub_address):
-    """Ping a hub once and return the command output."""
-    ping_option = "-n" if os.name == "nt" else "-c"
+    """Ping a courier hub without invoking a shell."""
     return subprocess.check_output(
-        ["ping", ping_option, "1", hub_address],
+        ["ping", "-c", "1", hub_address],
         text=True,
+        timeout=5,
     )
 
 
+def generate_otp():
+    """Generate a cryptographically secure four-digit OTP."""
+    return secrets.randbelow(9000) + 1000
+
+
 def main():
-    """Run a demonstration of the parcel-tracking system."""
-    first = book_parcel("Bengaluru Books", "Ravi Kumar", 2.5)
-    second = book_parcel("Gadget Hub", "Sneha Rao", 0.8)
-    third = book_parcel("Spice Store", "Imran Khan", 4)
+    """Run the parcel tracking demonstration."""
+    history = []
 
-    advance_status(first)
-    advance_status(first)
-    advance_status(second)
+    first = book_parcel(
+        "Bengaluru Books", "Ravi Kumar", 5.5, history
+    )
+    second = book_parcel(
+        "Gadget Hub", "Sneha Rao", 1, history
+    )
+    third = book_parcel(
+        "Spice Store", "Imran Khan", 10, history
+    )
 
-    for _ in range(6):
-        advance_status(third)
+    update_status(first, 2)
+    update_status(second, 1)
+    update_status(third, 4)
 
-    for tracking_id in (first, second, third):
+    for tracking_id in history:
         print(track_parcel(tracking_id))
-        print("  with courier:", is_with_courier(tracking_id))
-        print("  cost:", shipping_cost(parcels[tracking_id]["weight"]))
+        print("  with courier:", with_courier(tracking_id))
+        weight = parcels[tracking_id]["weight"]
+        print("  cost:", shipping_cost(weight))
 
-    print(track_parcel("TRK00000"))  # Unknown ID
-    delivery_otp = secrets.randbelow(9000) + 1000
-    print("Delivery OTP for", third, "is", delivery_otp)
+    unknown_id = "TRK00000"
+    print(
+        "Unknown tracking id",
+        track_parcel(unknown_id) or unknown_id,
+    )
+    print(
+        "Delivery OTP for",
+        third,
+        "is",
+        generate_otp(),
+    )
     print("Parcels booked today:", len(parcels))
 
 
